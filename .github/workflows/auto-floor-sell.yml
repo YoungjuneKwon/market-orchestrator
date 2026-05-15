@@ -1,0 +1,56 @@
+name: Auto Floor Sell
+
+on:
+  schedule:
+    # KST Mon-Fri 09:00-15:30, every 30 minutes (UTC: 00:00-06:30)
+    - cron: "0,30 0-6 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  run-auto-floor-sell:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip requests
+
+      - name: Build account.json from secrets
+        env:
+          KIS_API_KEY: ${{ secrets.KIS_API_KEY }}
+          KIS_API_SECRET: ${{ secrets.KIS_API_SECRET }}
+          KIS_CANO: ${{ secrets.KIS_CANO }}
+          KIS_ACNT_PRDT_CD: ${{ secrets.KIS_ACNT_PRDT_CD }}
+        run: |
+          test -n "${KIS_API_KEY}" || (echo "KIS_API_KEY is missing" && exit 1)
+          test -n "${KIS_API_SECRET}" || (echo "KIS_API_SECRET is missing" && exit 1)
+          test -n "${KIS_CANO}" || (echo "KIS_CANO is missing" && exit 1)
+          test -n "${KIS_ACNT_PRDT_CD}" || (echo "KIS_ACNT_PRDT_CD is missing" && exit 1)
+
+          mkdir -p services/trading-bot
+          cat > services/trading-bot/account.json <<EOF
+          {
+            "provider": "kis",
+            "params": {
+              "api_key": "${KIS_API_KEY}",
+              "api_secret": "${KIS_API_SECRET}",
+              "cano": "${KIS_CANO}",
+              "acnt_prdt_cd": "${KIS_ACNT_PRDT_CD}",
+              "env": "real"
+            }
+          }
+          EOF
+
+      - name: Run auto floor sell
+        run: |
+          python services/trading-bot/auto_floor_sell.py \
+            --config services/trading-bot/account.json \
+            --sell-ratio 0.10 \
+            --order-mode best_limit

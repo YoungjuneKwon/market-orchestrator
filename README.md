@@ -51,6 +51,8 @@ npm run dev
 - Input
   - `--sell-ratio` (default `0.10`)
   - `--config` account config JSON path
+  - `--order-mode` (`market` | `best_limit` | `aggressive_limit`)
+  - `--limit-offset-bps` (used by `aggressive_limit`, default `20`)
 - Current provider support: `kis`
 - Execution guard
   - It checks market open status on every run.
@@ -66,6 +68,7 @@ Use `services/trading-bot/account.example.json` as template.
 python services/trading-bot/auto_floor_sell.py \
   --config services/trading-bot/account.json \
   --sell-ratio 0.10 \
+  --order-mode best_limit \
   --dry-run
 ```
 
@@ -87,6 +90,19 @@ crontab -e
 ```
 
 Then register the cron line from the example file.
+
+### GitHub Actions Schedule
+
+Workflow file: `.github/workflows/auto-floor-sell.yml`
+
+- Schedule: KST Mon-Fri 09:00-15:30 every 30 minutes
+- Each run creates `services/trading-bot/account.json` from GitHub Secrets:
+  - `KIS_API_KEY`
+  - `KIS_API_SECRET`
+  - `KIS_CANO`
+  - `KIS_ACNT_PRDT_CD`
+- Then it runs `services/trading-bot/auto_floor_sell.py`
+- Workflow default order mode is `best_limit`
 
 ## GitHub Pages
 

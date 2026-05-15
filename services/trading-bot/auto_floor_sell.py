@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 import requests
@@ -89,7 +89,13 @@ class BrokerProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def market_sell(self, symbol: str, quantity: int) -> dict[str, Any]:
+    def sell(
+        self,
+        symbol: str,
+        quantity: int,
+        order_mode: Literal["market", "best_limit", "aggressive_limit"],
+        limit_offset_bps: int,
+    ) -> dict[str, Any]:
         raise NotImplementedError
 
 
@@ -388,9 +394,50 @@ class KisProvider(BrokerProvider):
         output = data.get("output") or {}
         return _safe_float(output.get("stck_prpr"))
 
-    def market_sell(self, symbol: str, quantity: int) -> dict[str, Any]:
+    def _krx_tick_size(self, price: float) -> int:
+        if price < 2000:
+            return 1
+        if price < 5000:
+            return 5
+        if price < 20000:
+            return 10
+        if price < 50000:
+            return 50
+        if price < 200000:
+            return 100
+        if price < 500000:
+            return 500
+        return 1000
+
+    def _to_valid_limit_price_for_sell(self, reference_price: float, limit_offset_bps: int) -> int:
+        adjusted = reference_price * (1 - (limit_offset_bps / 10000))
+        tick = self._krx_tick_size(adjusted)
+        rounded = int(adjusted // tick) * tick
+        return max(rounded, tick)
+
+    def sell(
+        self,
+        symbol: str,
+        quantity: int,
+        order_mode: Literal["market", "best_limit", "aggressive_limit"],
+        limit_offset_bps: int,
+    ) -> dict[str, Any]:
         if quantity <= 0:
             raise ValueError("quantity must be positive")
+
+        ord_dvsn = "01"
+        ord_unpr = "0"
+
+        if order_mode == "best_limit":
+            ord_dvsn = "03"
+            ord_unpr = "0"
+        elif order_mode == "aggressive_limit":
+            reference_price = self.get_current_price(symbol)
+            limit_price = self._to_valid_limit_price_for_sell(reference_price, limit_offset_bps)
+            ord_dvsn = "00"
+            ord_unpr = str(limit_price)
+        elif order_mode != "market":
+            raise ValueError(f"Unsupported order mode: {order_mode}")
 
         data, _ = self._request(
             method="POST",
@@ -400,9 +447,9 @@ class KisProvider(BrokerProvider):
                 "CANO": self.cano,
                 "ACNT_PRDT_CD": self.acnt_prdt_cd,
                 "PDNO": symbol,
-                "ORD_DVSN": "01",
+                "ORD_DVSN": ord_dvsn,
                 "ORD_QTY": str(quantity),
-                "ORD_UNPR": "0",
+                "ORD_UNPR": ord_unpr,
                 "EXCG_ID_DVSN_CD": "KRX",
                 "SLL_TYPE": "",
                 "CNDT_PRIC": "",
@@ -485,6 +532,8 @@ def run_auto_floor_sell(
     lookback_days: int,
     dry_run: bool,
     read_only: bool,
+    order_mode: Literal["market", "best_limit", "aggressive_limit"],
+    limit_offset_bps: int,
 ) -> int:
     account_config = load_account_config(config_path)
     broker = build_provider(account_config)
@@ -519,15 +568,20 @@ def run_auto_floor_sell(
             mode = "read-only" if read_only else "dry-run"
             print(
                 f"[{mode}] sell trigger "
-                f"{decision.symbol} qty={decision.orderable_quantity}"
+                f"{decision.symbol} qty={decision.orderable_quantity} order_mode={order_mode}"
             )
             continue
 
-        order_result = broker.market_sell(decision.symbol, decision.orderable_quantity)
+        order_result = broker.sell(
+            decision.symbol,
+            decision.orderable_quantity,
+            order_mode,
+            limit_offset_bps,
+        )
         order_no = order_result.get("ODNO") or order_result.get("odno") or "-"
         print(
             "[sell] executed "
-            f"{decision.symbol} qty={decision.orderable_quantity} order_no={order_no}"
+            f"{decision.symbol} qty={decision.orderable_quantity} order_mode={order_mode} order_no={order_no}"
         )
 
     return 0
@@ -564,6 +618,18 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Query and evaluate only (ignores market-open gate, never sends orders)",
     )
+    parser.add_argument(
+        "--order-mode",
+        choices=["market", "best_limit", "aggressive_limit"],
+        default="market",
+        help="Sell order mode (default: market)",
+    )
+    parser.add_argument(
+        "--limit-offset-bps",
+        type=int,
+        default=20,
+        help="For aggressive_limit only: sell limit offset below current price in bps (default: 20)",
+    )
     return parser.parse_args()
 
 
@@ -575,6 +641,8 @@ def main() -> int:
         raise SystemExit("--sell-ratio must be less than 1")
     if args.lookback_days <= 0:
         raise SystemExit("--lookback-days must be greater than 0")
+    if args.limit_offset_bps < 0:
+        raise SystemExit("--limit-offset-bps must be 0 or greater")
 
     try:
         return run_auto_floor_sell(
@@ -583,6 +651,8 @@ def main() -> int:
             lookback_days=args.lookback_days,
             dry_run=args.dry_run,
             read_only=args.read_only,
+            order_mode=args.order_mode,
+            limit_offset_bps=args.limit_offset_bps,
         )
     except (ConfigError, BrokerError, requests.RequestException) as exc:
         print(f"[error] {exc}")
