@@ -1,0 +1,5 @@
+# KST business days (Mon-Fri), every 15 minutes from 09:00 to 15:00
+# Add this line with `crontab -e`
+
+TZ=Asia/Seoul
+*/15 9-15 * * 1-5 /usr/bin/python3 /contents/workspace/kis/services/trading-bot/auto_floor_sell.py --config /contents/workspace/kis/services/trading-bot/account.json --sell-ratio 0.10 >> /contents/workspace/kis/services/scheduler/auto_floor_sell.log 2>&1

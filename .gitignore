@@ -1,4 +1,5 @@
 .env
+services/trading-bot/account.json
 reference/
 
 # Python

@@ -1,0 +1,11 @@
+{
+  "provider": "kis",
+  "params": {
+    "api_key": "your_kis_api_key",
+    "api_secret": "your_kis_api_secret",
+    "cano": "12345678",
+    "acnt_prdt_cd": "01",
+    "_comment_env": "env: vps=KIS 모의투자 서버, real/prod=KIS 실전 서버",
+    "env": "vps"
+  }
+}
