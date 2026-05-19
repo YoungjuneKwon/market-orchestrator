@@ -112,7 +112,7 @@ jobs:
 
       - name: Persist KIS token state to repository Secret/Variable (best-effort)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.KIS_TOKEN_STATE_TOKEN  }}
           TOKEN_STATE_PATH: ${{ runner.temp }}/kis-token-state.json
           TOKEN_VALUE_PATH: ${{ runner.temp }}/kis-access-token.txt
           TOKEN_ISSUED_AT_PATH: ${{ runner.temp }}/kis-access-token-issued-at.txt
