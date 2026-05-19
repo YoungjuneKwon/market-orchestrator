@@ -89,7 +89,7 @@ jobs:
             --access-token-issued-at "${KIS_ACCESS_TOKEN_ISSUED_AT}" \
             --token-reuse-hours 21
 
-      - name: Persist KIS token state to repository Secret/Variable
+      - name: Persist KIS token state to repository Secret/Variable (best-effort)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TOKEN_STATE_PATH: ${{ runner.temp }}/kis-token-state.json
@@ -120,7 +120,40 @@ jobs:
           Path(os.environ["TOKEN_ISSUED_AT_PATH"]).write_text(access_token_issued_at, encoding="utf-8")
           PY
 
-          # Requires `actions: write` permission to update repository Secret/Variable.
-          # If either command fails, the workflow fails so stale token state is not silently ignored.
-          gh secret set KIS_ACCESS_TOKEN --repo "${GITHUB_REPOSITORY}" < "${TOKEN_VALUE_PATH}"
-          gh variable set KIS_ACCESS_TOKEN_ISSUED_AT --repo "${GITHUB_REPOSITORY}" --body "$(cat "${TOKEN_ISSUED_AT_PATH}")"
+          # Best-effort persistence:
+          # On some repos, workflow GITHUB_TOKEN cannot access Actions secret/variable APIs (HTTP 403).
+          # In that case, keep job green and continue using existing token cache on next run.
+          secret_err=""
+          variable_err=""
+
+          if ! secret_output=$(gh secret set KIS_ACCESS_TOKEN --repo "${GITHUB_REPOSITORY}" < "${TOKEN_VALUE_PATH}" 2>&1); then
+            secret_err="${secret_output}"
+          fi
+
+          if ! variable_output=$(gh variable set KIS_ACCESS_TOKEN_ISSUED_AT --repo "${GITHUB_REPOSITORY}" --body "$(cat "${TOKEN_ISSUED_AT_PATH}")" 2>&1); then
+            variable_err="${variable_output}"
+          fi
+
+          if [ -n "${secret_err}" ] || [ -n "${variable_err}" ]; then
+            combined_err=""
+            if [ -n "${secret_err}" ]; then
+              combined_err="${secret_err}"
+            fi
+            if [ -n "${variable_err}" ]; then
+              if [ -n "${combined_err}" ]; then
+                combined_err="${combined_err}
+${variable_err}"
+              else
+                combined_err="${variable_err}"
+              fi
+            fi
+            if echo "${combined_err}" | grep -Eqi "403([[:space:]]*Forbidden)?|Resource not accessible"; then
+              echo "::warning::Failed to persist refreshed token state due to GitHub token permission limits. Continuing without persistence."
+              exit 0
+            fi
+
+            echo "::error::Failed to persist refreshed token state."
+            [ -z "${secret_err}" ] || echo "::error::secret update error: ${secret_err}"
+            [ -z "${variable_err}" ] || echo "::error::variable update error: ${variable_err}"
+            exit 1
+          fi
