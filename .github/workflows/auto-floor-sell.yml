@@ -120,7 +120,7 @@ jobs:
           Path(os.environ["TOKEN_ISSUED_AT_PATH"]).write_text(access_token_issued_at, encoding="utf-8")
           PY
 
-          # Requires `actions: write` permission to update repository secret/variable.
+          # Requires `actions: write` permission to update repository Secret/Variable.
           # If either command fails, the workflow fails so stale token state is not silently ignored.
           gh secret set KIS_ACCESS_TOKEN --repo "${GITHUB_REPOSITORY}" < "${TOKEN_VALUE_PATH}"
           gh variable set KIS_ACCESS_TOKEN_ISSUED_AT --repo "${GITHUB_REPOSITORY}" --body "$(cat "${TOKEN_ISSUED_AT_PATH}")"
