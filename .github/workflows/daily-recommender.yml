@@ -84,7 +84,7 @@ jobs:
           python services/trading-bot/daily_recommender.py \
             --config services/trading-bot/account.json \
             --phase 3 \
-            --top-n 30 \
+            --top-n 200 \
             --max-per 150 \
             --min-roe 5 \
             --lookback-n 5 \
@@ -92,7 +92,7 @@ jobs:
             --pullback-x 3 \
             --rebound-y 2 \
             --volume-window 20 \
-            --volume-surge-ratio 1.5 \
+            --volume-surge-ratio 1.15 \
             --ma-short 5 \
             --ma-mid 20 \
             --ma-long 60 \
