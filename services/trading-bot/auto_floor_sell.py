@@ -132,6 +132,7 @@ class KisProvider(BrokerProvider):
             raise ConfigError("KIS token_reuse_hours must be a number") from exc
         if self.token_reuse_hours <= 0:
             raise ConfigError("KIS token_reuse_hours must be greater than 0")
+        self._token_reuse_seconds = self.token_reuse_hours * 60 * 60
 
         self._token: str | None = None
         self._token_issued_at: datetime | None = None
@@ -142,12 +143,10 @@ class KisProvider(BrokerProvider):
         cached_token_issued_at = self._parse_utc_iso8601(params.get("access_token_issued_at"))
         if cached_token and cached_token_issued_at:
             age_seconds = (datetime.now(timezone.utc) - cached_token_issued_at).total_seconds()
-            if 0 <= age_seconds < self.token_reuse_hours * 60 * 60:
+            if 0 <= age_seconds < self._token_reuse_seconds:
                 self._token = str(cached_token)
                 self._token_issued_at = cached_token_issued_at
-                self._token_expires_at = (
-                    cached_token_issued_at.timestamp() + self.token_reuse_hours * 60 * 60
-                )
+                self._token_expires_at = cached_token_issued_at.timestamp() + self._token_reuse_seconds
 
     @staticmethod
     def _parse_utc_iso8601(value: Any) -> datetime | None:
@@ -185,7 +184,7 @@ class KisProvider(BrokerProvider):
             raise BrokerError(f"KIS token issue failed: {data}")
         self._token = access_token
         self._token_issued_at = datetime.now(timezone.utc)
-        self._token_expires_at = self._token_issued_at.timestamp() + self.token_reuse_hours * 60 * 60
+        self._token_expires_at = self._token_issued_at.timestamp() + self._token_reuse_seconds
         self._issued_new_token = True
 
     def _auth_header(self) -> dict[str, str]:
@@ -544,8 +543,7 @@ def write_token_state_output(broker: BrokerProvider, output_path: str | None) ->
     if not token_state:
         return
     path = Path(output_path)
-    if path.parent:
-        path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(token_state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 

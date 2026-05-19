@@ -86,11 +86,27 @@ jobs:
             exit 0
           fi
 
-          access_token="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("access_token",""))' "${TOKEN_STATE_PATH}")"
-          access_token_issued_at="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("access_token_issued_at",""))' "${TOKEN_STATE_PATH}")"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
-          test -n "${access_token}" || (echo "token state is missing access_token" && exit 1)
-          test -n "${access_token_issued_at}" || (echo "token state is missing access_token_issued_at" && exit 1)
+          token_state_path = Path(os.environ["TOKEN_STATE_PATH"])
+          data = json.loads(token_state_path.read_text(encoding="utf-8"))
+          access_token = str(data.get("access_token", "")).strip()
+          access_token_issued_at = str(data.get("access_token_issued_at", "")).strip()
 
-          gh secret set KIS_ACCESS_TOKEN --repo "${GITHUB_REPOSITORY}" --body "${access_token}"
-          gh variable set KIS_ACCESS_TOKEN_ISSUED_AT --repo "${GITHUB_REPOSITORY}" --body "${access_token_issued_at}"
+          if not access_token:
+              raise SystemExit("token state is missing access_token")
+          if not access_token_issued_at:
+              raise SystemExit("token state is missing access_token_issued_at")
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"KIS_TOKEN_STATE_ACCESS_TOKEN={access_token}\n")
+              env_file.write(f"KIS_TOKEN_STATE_ACCESS_TOKEN_ISSUED_AT={access_token_issued_at}\n")
+          PY
+
+          # Requires `actions: write` permission to update repository secret/variable.
+          # If either command fails, the workflow fails so stale token state is not silently ignored.
+          gh secret set KIS_ACCESS_TOKEN --repo "${GITHUB_REPOSITORY}" --body "${KIS_TOKEN_STATE_ACCESS_TOKEN}"
+          gh variable set KIS_ACCESS_TOKEN_ISSUED_AT --repo "${GITHUB_REPOSITORY}" --body "${KIS_TOKEN_STATE_ACCESS_TOKEN_ISSUED_AT}"
