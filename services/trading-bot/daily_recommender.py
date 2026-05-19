@@ -503,8 +503,8 @@ class RecommenderConfig:
     kospi_ma_window: int = 20
     defensive_max_recommend: int = 5
     max_recommend: int = 20
-    min_price: float = 0.0  # 0 = disabled (원)
-    max_price: float = 0.0  # 0 = disabled (원)
+    min_price: float = 0.0  # 0 = disabled (KRW)
+    max_price: float = 0.0  # 0 = disabled (KRW)
 
 
 def build_macro_context(provider: RecommenderKisProvider, cfg: RecommenderConfig) -> dict[str, Any]:
@@ -545,6 +545,7 @@ def evaluate_candidate(
     pbr = snapshot["pbr"]
     if current_price <= 0:
         return None
+    # Price range guard: filter stocks outside the configured KRW range.
     if cfg.min_price > 0 and current_price < cfg.min_price:
         return None
     if cfg.max_price > 0 and current_price > cfg.max_price:
