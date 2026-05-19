@@ -7,7 +7,7 @@ import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -125,8 +125,49 @@ class KisProvider(BrokerProvider):
         if missing:
             raise ConfigError(f"Missing KIS params: {', '.join(missing)}")
 
+        token_reuse_hours = params.get("token_reuse_hours", 21)
+        try:
+            self.token_reuse_hours = float(token_reuse_hours)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError("KIS token_reuse_hours must be a number") from exc
+        if self.token_reuse_hours <= 0:
+            raise ConfigError("KIS token_reuse_hours must be greater than 0")
+        self._token_reuse_seconds = self.token_reuse_hours * 60 * 60
+
         self._token: str | None = None
+        self._token_issued_at: datetime | None = None
         self._token_expires_at: float = 0.0
+        self._issued_new_token: bool = False
+
+        cached_token = params.get("access_token")
+        cached_token_issued_at = self._parse_utc_iso8601(params.get("access_token_issued_at"))
+        if cached_token and cached_token_issued_at:
+            age_seconds = (datetime.now(timezone.utc) - cached_token_issued_at).total_seconds()
+            if 0 <= age_seconds < self._token_reuse_seconds:
+                self._token = str(cached_token)
+                self._token_issued_at = cached_token_issued_at
+                self._token_expires_at = cached_token_issued_at.timestamp() + self._token_reuse_seconds
+
+    @staticmethod
+    def _parse_utc_iso8601(value: Any) -> datetime | None:
+        if not value:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @staticmethod
+    def _utc_isoformat(value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     def _issue_token(self) -> None:
         url = f"{self.base_url}/oauth2/tokenP"
@@ -142,7 +183,9 @@ class KisProvider(BrokerProvider):
         if not access_token:
             raise BrokerError(f"KIS token issue failed: {data}")
         self._token = access_token
-        self._token_expires_at = time.time() + 60 * 60
+        self._token_issued_at = datetime.now(timezone.utc)
+        self._token_expires_at = self._token_issued_at.timestamp() + self._token_reuse_seconds
+        self._issued_new_token = True
 
     def _auth_header(self) -> dict[str, str]:
         if not self._token or time.time() >= self._token_expires_at - 60:
@@ -152,6 +195,14 @@ class KisProvider(BrokerProvider):
             "appkey": str(self.api_key),
             "appsecret": str(self.api_secret),
             "custtype": "P",
+        }
+
+    def issued_new_token_state(self) -> dict[str, str] | None:
+        if not self._issued_new_token or not self._token or not self._token_issued_at:
+            return None
+        return {
+            "access_token": self._token,
+            "access_token_issued_at": self._utc_isoformat(self._token_issued_at),
         }
 
     def _hashkey(self, body: dict[str, Any]) -> str:
@@ -485,6 +536,17 @@ def build_provider(account_config: dict[str, Any]) -> BrokerProvider:
     raise ConfigError(f"Unsupported provider: {provider}")
 
 
+def write_token_state_output(broker: BrokerProvider, output_path: str | None) -> None:
+    if not output_path or not isinstance(broker, KisProvider):
+        return
+    token_state = broker.issued_new_token_state()
+    if not token_state:
+        return
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(token_state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def evaluate_sell_decisions(
     broker: BrokerProvider,
     sell_ratio: float,
@@ -534,19 +596,32 @@ def run_auto_floor_sell(
     read_only: bool,
     order_mode: Literal["market", "best_limit", "aggressive_limit"],
     limit_offset_bps: int,
+    token_state_output: str | None = None,
+    access_token: str | None = None,
+    access_token_issued_at: str | None = None,
+    token_reuse_hours: float | None = None,
 ) -> int:
     account_config = load_account_config(config_path)
+    params = account_config.setdefault("params", {})
+    if access_token is not None:
+        params["access_token"] = access_token
+    if access_token_issued_at is not None:
+        params["access_token_issued_at"] = access_token_issued_at
+    if token_reuse_hours is not None:
+        params["token_reuse_hours"] = token_reuse_hours
     broker = build_provider(account_config)
     now_kst = datetime.now(KST)
 
     if not read_only and not broker.is_market_open(now_kst):
         print("[skip] Market is not open. Sell logic is not executed.")
+        write_token_state_output(broker, token_state_output)
         return 0
 
     decisions = evaluate_sell_decisions(broker, sell_ratio, lookback_days, now_kst)
 
     if not decisions:
         print("[done] No eligible positions for auto floor sell.")
+        write_token_state_output(broker, token_state_output)
         return 0
 
     for decision in decisions:
@@ -584,6 +659,7 @@ def run_auto_floor_sell(
             f"{decision.symbol} qty={decision.orderable_quantity} order_mode={order_mode} order_no={order_no}"
         )
 
+    write_token_state_output(broker, token_state_output)
     return 0
 
 
@@ -630,6 +706,27 @@ def parse_args() -> argparse.Namespace:
         default=20,
         help="For aggressive_limit only: sell limit offset below current price in bps (default: 20)",
     )
+    parser.add_argument(
+        "--token-state-output",
+        help=(
+            "Write token state JSON when a new token is issued "
+            '(contains "access_token" and "access_token_issued_at")'
+        ),
+    )
+    parser.add_argument(
+        "--access-token",
+        help="Cached KIS access token to reuse when still within the reuse window",
+    )
+    parser.add_argument(
+        "--access-token-issued-at",
+        help='UTC ISO-8601 timestamp for --access-token issue time (for example, "2026-05-19T00:05:12Z")',
+    )
+    parser.add_argument(
+        "--token-reuse-hours",
+        type=float,
+        default=None,
+        help="KIS cached token reuse window in hours (default: provider config or 21)",
+    )
     return parser.parse_args()
 
 
@@ -653,6 +750,10 @@ def main() -> int:
             read_only=args.read_only,
             order_mode=args.order_mode,
             limit_offset_bps=args.limit_offset_bps,
+            token_state_output=args.token_state_output,
+            access_token=args.access_token,
+            access_token_issued_at=args.access_token_issued_at,
+            token_reuse_hours=args.token_reuse_hours,
         )
     except (ConfigError, BrokerError, requests.RequestException) as exc:
         print(f"[error] {exc}")
