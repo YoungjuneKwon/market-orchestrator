@@ -85,25 +85,27 @@ jobs:
             --config services/trading-bot/account.json \
             --phase 3 \
             --top-n 30 \
-            --max-per 100 \
-            --min-roe 8 \
+            --max-per 150 \
+            --min-roe 5 \
             --lookback-n 5 \
             --up-days-m 3 \
             --pullback-x 3 \
             --rebound-y 2 \
             --volume-window 20 \
-            --volume-surge-ratio 2.0 \
+            --volume-surge-ratio 1.5 \
             --ma-short 5 \
             --ma-mid 20 \
             --ma-long 60 \
-            --max-disparity-pct 15 \
+            --max-disparity-pct 20 \
             --invflow-days-lookback 5 \
-            --invflow-days-k 3 \
+            --invflow-days-k 2 \
             --rsi-period 14 \
-            --rsi-max 70 \
+            --rsi-max 75 \
             --kospi-ma-window 20 \
             --defensive-max-recommend 5 \
             --max-recommend 20 \
+            --min-price 150000 \
+            --max-price 300000 \
             --api-call-delay 0.2 \
             --token-state-output "${TOKEN_STATE_PATH}" \
             --access-token "${KIS_ACCESS_TOKEN}" \

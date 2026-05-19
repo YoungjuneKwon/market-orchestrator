@@ -503,6 +503,8 @@ class RecommenderConfig:
     kospi_ma_window: int = 20
     defensive_max_recommend: int = 5
     max_recommend: int = 20
+    min_price: float = 0.0  # 0 = disabled (원)
+    max_price: float = 0.0  # 0 = disabled (원)
 
 
 def build_macro_context(provider: RecommenderKisProvider, cfg: RecommenderConfig) -> dict[str, Any]:
@@ -542,6 +544,10 @@ def evaluate_candidate(
     per = snapshot["per"]
     pbr = snapshot["pbr"]
     if current_price <= 0:
+        return None
+    if cfg.min_price > 0 and current_price < cfg.min_price:
+        return None
+    if cfg.max_price > 0 and current_price > cfg.max_price:
         return None
     if cfg.max_per > 0 and per > 0 and per >= cfg.max_per:
         return None
@@ -772,6 +778,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-recommend", type=int, default=20,
                         help="Maximum number of recommended stocks")
 
+    parser.add_argument("--min-price", type=float, default=0.0,
+                        help="Exclude stocks with current price below this value in KRW (0 to disable)")
+    parser.add_argument("--max-price", type=float, default=0.0,
+                        help="Exclude stocks with current price above this value in KRW (0 to disable)")
+
     parser.add_argument("--api-call-delay", type=float, default=0.15,
                         help="Sleep seconds between KIS API calls (rate-limit)")
 
@@ -812,6 +823,8 @@ def args_to_config(args: argparse.Namespace) -> RecommenderConfig:
         kospi_ma_window=args.kospi_ma_window,
         defensive_max_recommend=args.defensive_max_recommend,
         max_recommend=args.max_recommend,
+        min_price=args.min_price,
+        max_price=args.max_price,
     )
 
 
@@ -877,6 +890,12 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("--max-recommend must be greater than 0")
     if args.api_call_delay < 0:
         raise SystemExit("--api-call-delay must be >= 0")
+    if args.min_price < 0:
+        raise SystemExit("--min-price must be >= 0")
+    if args.max_price < 0:
+        raise SystemExit("--max-price must be >= 0")
+    if args.min_price > 0 and args.max_price > 0 and args.min_price > args.max_price:
+        raise SystemExit("--min-price must be <= --max-price when both are set")
 
 
 def main(argv: Iterable[str] | None = None) -> int:
