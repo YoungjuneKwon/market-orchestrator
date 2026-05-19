@@ -1,0 +1,146 @@
+name: Daily Recommender
+
+on:
+  schedule:
+    # KST is fixed UTC+9 year-round (no DST), so 13:00 KST == 04:00 UTC.
+    # KST Mon-Fri 13:00 (UTC 04:00, Mon-Fri)
+    - cron: "0 4 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  run-daily-recommender:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip requests
+
+      - name: Log trigger time (UTC/KST)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          echo "event_name=${EVENT_NAME}"
+          echo "runner_now_utc=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "runner_now_kst=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S KST')"
+          echo "scheduled_slot_kst=13:00"
+
+      - name: Build account.json from secrets
+        env:
+          KIS_API_KEY: ${{ secrets.KIS_API_KEY }}
+          KIS_API_SECRET: ${{ secrets.KIS_API_SECRET }}
+          KIS_CANO: ${{ secrets.KIS_CANO }}
+          KIS_ACNT_PRDT_CD: ${{ secrets.KIS_ACNT_PRDT_CD }}
+          KIS_ACCESS_TOKEN: ${{ secrets.KIS_ACCESS_TOKEN }}
+          KIS_ACCESS_TOKEN_ISSUED_AT: ${{ vars.KIS_ACCESS_TOKEN_ISSUED_AT }}
+        run: |
+          test -n "${KIS_API_KEY}" || (echo "KIS_API_KEY is missing" && exit 1)
+          test -n "${KIS_API_SECRET}" || (echo "KIS_API_SECRET is missing" && exit 1)
+          test -n "${KIS_CANO}" || (echo "KIS_CANO is missing" && exit 1)
+          test -n "${KIS_ACNT_PRDT_CD}" || (echo "KIS_ACNT_PRDT_CD is missing" && exit 1)
+
+          mkdir -p services/trading-bot
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          account_config = {
+              "provider": "kis",
+              "params": {
+                  "api_key": os.environ["KIS_API_KEY"],
+                  "api_secret": os.environ["KIS_API_SECRET"],
+                  "cano": os.environ["KIS_CANO"],
+                  "acnt_prdt_cd": os.environ["KIS_ACNT_PRDT_CD"],
+                  "env": "real",
+                  "access_token": os.environ.get("KIS_ACCESS_TOKEN", ""),
+                  "access_token_issued_at": os.environ.get("KIS_ACCESS_TOKEN_ISSUED_AT", ""),
+                  "token_reuse_hours": 21,
+              },
+          }
+          Path("services/trading-bot/account.json").write_text(
+              json.dumps(account_config, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Run daily recommender
+        env:
+          KIS_ACCESS_TOKEN: ${{ secrets.KIS_ACCESS_TOKEN }}
+          KIS_ACCESS_TOKEN_ISSUED_AT: ${{ vars.KIS_ACCESS_TOKEN_ISSUED_AT }}
+          TOKEN_STATE_PATH: ${{ runner.temp }}/kis-token-state.json
+        run: |
+          python services/trading-bot/daily_recommender.py \
+            --config services/trading-bot/account.json \
+            --phase 3 \
+            --top-n 30 \
+            --max-per 100 \
+            --min-roe 8 \
+            --lookback-n 5 \
+            --up-days-m 3 \
+            --pullback-x 3 \
+            --rebound-y 2 \
+            --volume-window 20 \
+            --volume-surge-ratio 2.0 \
+            --ma-short 5 \
+            --ma-mid 20 \
+            --ma-long 60 \
+            --max-disparity-pct 15 \
+            --invflow-days-lookback 5 \
+            --invflow-days-k 3 \
+            --rsi-period 14 \
+            --rsi-max 70 \
+            --kospi-ma-window 20 \
+            --defensive-max-recommend 5 \
+            --max-recommend 20 \
+            --api-call-delay 0.2 \
+            --token-state-output "${TOKEN_STATE_PATH}" \
+            --access-token "${KIS_ACCESS_TOKEN}" \
+            --access-token-issued-at "${KIS_ACCESS_TOKEN_ISSUED_AT}" \
+            --token-reuse-hours 21
+
+      - name: Persist KIS token state to repository Secret/Variable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN_STATE_PATH: ${{ runner.temp }}/kis-token-state.json
+          TOKEN_VALUE_PATH: ${{ runner.temp }}/kis-access-token.txt
+          TOKEN_ISSUED_AT_PATH: ${{ runner.temp }}/kis-access-token-issued-at.txt
+        run: |
+          if [ ! -f "${TOKEN_STATE_PATH}" ]; then
+            echo "No refreshed token state to persist."
+            exit 0
+          fi
+
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          token_state_path = Path(os.environ["TOKEN_STATE_PATH"])
+          data = json.loads(token_state_path.read_text(encoding="utf-8"))
+          access_token = str(data.get("access_token", "")).strip()
+          access_token_issued_at = str(data.get("access_token_issued_at", "")).strip()
+
+          if not access_token:
+              raise SystemExit("token state is missing access_token")
+          if not access_token_issued_at:
+              raise SystemExit("token state is missing access_token_issued_at")
+
+          Path(os.environ["TOKEN_VALUE_PATH"]).write_text(access_token, encoding="utf-8")
+          Path(os.environ["TOKEN_ISSUED_AT_PATH"]).write_text(access_token_issued_at, encoding="utf-8")
+          PY
+
+          # Requires `actions: write` permission to update repository Secret/Variable.
+          gh secret set KIS_ACCESS_TOKEN --repo "${GITHUB_REPOSITORY}" < "${TOKEN_VALUE_PATH}"
+          gh variable set KIS_ACCESS_TOKEN_ISSUED_AT --repo "${GITHUB_REPOSITORY}" --body "$(cat "${TOKEN_ISSUED_AT_PATH}")"
