@@ -104,8 +104,8 @@ jobs:
             --kospi-ma-window 20 \
             --defensive-max-recommend 5 \
             --max-recommend 20 \
-            --min-price 150000 \
-            --max-price 300000 \
+            --min-price 0 \
+            --max-price 0 \
             --api-call-delay 0.2 \
             --token-state-output "${TOKEN_STATE_PATH}" \
             --access-token "${KIS_ACCESS_TOKEN}" \
