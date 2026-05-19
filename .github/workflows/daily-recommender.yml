@@ -144,12 +144,37 @@ jobs:
           # Best-effort persistence:
           # On some repos, workflow GITHUB_TOKEN cannot access Actions secret/variable APIs (HTTP 403).
           # In that case, keep job green and continue using existing token cache on next run.
-          if ! gh secret set KIS_ACCESS_TOKEN --repo "${GITHUB_REPOSITORY}" < "${TOKEN_VALUE_PATH}"; then
-            echo "::warning::Failed to update KIS_ACCESS_TOKEN secret (likely insufficient token permission). Skipping token persistence."
-            exit 0
+          secret_err=""
+          variable_err=""
+
+          if ! secret_output=$(gh secret set KIS_ACCESS_TOKEN --repo "${GITHUB_REPOSITORY}" < "${TOKEN_VALUE_PATH}" 2>&1); then
+            secret_err="${secret_output}"
           fi
 
-          if ! gh variable set KIS_ACCESS_TOKEN_ISSUED_AT --repo "${GITHUB_REPOSITORY}" --body "$(cat "${TOKEN_ISSUED_AT_PATH}")"; then
-            echo "::warning::Failed to update KIS_ACCESS_TOKEN_ISSUED_AT variable (likely insufficient token permission). Skipping token persistence."
-            exit 0
+          if ! variable_output=$(gh variable set KIS_ACCESS_TOKEN_ISSUED_AT --repo "${GITHUB_REPOSITORY}" --body "$(cat "${TOKEN_ISSUED_AT_PATH}")" 2>&1); then
+            variable_err="${variable_output}"
+          fi
+
+          if [ -n "${secret_err}" ] || [ -n "${variable_err}" ]; then
+            combined_err=""
+            if [ -n "${secret_err}" ]; then
+              combined_err="${secret_err}"
+            fi
+            if [ -n "${variable_err}" ]; then
+              if [ -n "${combined_err}" ]; then
+                combined_err="${combined_err}
+${variable_err}"
+              else
+                combined_err="${variable_err}"
+              fi
+            fi
+            if echo "${combined_err}" | grep -Eqi "403([[:space:]]*Forbidden)?|Resource not accessible"; then
+              echo "::warning::Failed to persist refreshed token state due to GitHub token permission limits. Continuing without persistence."
+              exit 0
+            fi
+
+            echo "::error::Failed to persist refreshed token state."
+            [ -z "${secret_err}" ] || echo "::error::secret update error: ${secret_err}"
+            [ -z "${variable_err}" ] || echo "::error::variable update error: ${variable_err}"
+            exit 1
           fi
