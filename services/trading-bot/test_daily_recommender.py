@@ -237,6 +237,34 @@ class EvaluateCandidateTests(unittest.TestCase):
         rec = daily_recommender.evaluate_candidate(provider, self.item, cfg, macro)
         self.assertIsNone(rec)
 
+    def test_rejects_price_below_min(self):
+        bars = _build_uptrend_bars()
+        cfg = self.cfg
+        cfg.min_price = 100000.0  # item price is 70000 → below min
+        provider = self._provider_for(bars)
+        macro = daily_recommender.build_macro_context(provider, cfg)
+        rec = daily_recommender.evaluate_candidate(provider, self.item, cfg, macro)
+        self.assertIsNone(rec)
+
+    def test_rejects_price_above_max(self):
+        bars = _build_uptrend_bars()
+        cfg = self.cfg
+        cfg.max_price = 50000.0  # item price is 70000 → above max
+        provider = self._provider_for(bars)
+        macro = daily_recommender.build_macro_context(provider, cfg)
+        rec = daily_recommender.evaluate_candidate(provider, self.item, cfg, macro)
+        self.assertIsNone(rec)
+
+    def test_qualifies_within_price_range(self):
+        bars = _build_uptrend_bars()
+        cfg = self.cfg
+        cfg.min_price = 50000.0
+        cfg.max_price = 100000.0  # item price is 70000 → within range
+        provider = self._provider_for(bars)
+        macro = daily_recommender.build_macro_context(provider, cfg)
+        rec = daily_recommender.evaluate_candidate(provider, self.item, cfg, macro)
+        self.assertIsNotNone(rec)
+
     def test_defensive_max_recommend_in_downtrend(self):
         cfg = self.cfg
         cfg.defensive_max_recommend = 1
