@@ -27,6 +27,11 @@ class _FakeResponse:
         return self._data
 
 
+class _FakeBroker:
+    def is_market_open(self, now_kst):
+        return False
+
+
 class KisTokenReuseTests(unittest.TestCase):
     def _params(self, **kwargs):
         params = {
@@ -90,6 +95,40 @@ class KisTokenReuseTests(unittest.TestCase):
             data = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(data["access_token"], "refreshed-token")
             self.assertTrue(data["access_token_issued_at"].endswith("Z"))
+
+    def test_run_auto_floor_sell_applies_cli_token_overrides(self):
+        captured_config = {}
+
+        def fake_build_provider(account_config):
+            captured_config.update(account_config)
+            return _FakeBroker()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "account.json"
+            config_path.write_text(
+                json.dumps({"provider": "kis", "params": {"env": "real"}}),
+                encoding="utf-8",
+            )
+
+            with patch.object(auto_floor_sell, "build_provider", side_effect=fake_build_provider):
+                result = auto_floor_sell.run_auto_floor_sell(
+                    config_path=str(config_path),
+                    sell_ratio=0.10,
+                    lookback_days=365,
+                    dry_run=False,
+                    read_only=False,
+                    order_mode="best_limit",
+                    limit_offset_bps=20,
+                    access_token="cli-token",
+                    access_token_issued_at="2026-05-19T00:05:12Z",
+                    token_reuse_hours=21,
+                )
+
+        self.assertEqual(result, 0)
+        params = captured_config["params"]
+        self.assertEqual(params["access_token"], "cli-token")
+        self.assertEqual(params["access_token_issued_at"], "2026-05-19T00:05:12Z")
+        self.assertEqual(params["token_reuse_hours"], 21)
 
 
 if __name__ == "__main__":

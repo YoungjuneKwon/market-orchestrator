@@ -597,8 +597,18 @@ def run_auto_floor_sell(
     order_mode: Literal["market", "best_limit", "aggressive_limit"],
     limit_offset_bps: int,
     token_state_output: str | None = None,
+    access_token: str | None = None,
+    access_token_issued_at: str | None = None,
+    token_reuse_hours: float | None = None,
 ) -> int:
     account_config = load_account_config(config_path)
+    params = account_config.setdefault("params", {})
+    if access_token is not None:
+        params["access_token"] = access_token
+    if access_token_issued_at is not None:
+        params["access_token_issued_at"] = access_token_issued_at
+    if token_reuse_hours is not None:
+        params["token_reuse_hours"] = token_reuse_hours
     broker = build_provider(account_config)
     now_kst = datetime.now(KST)
 
@@ -703,6 +713,20 @@ def parse_args() -> argparse.Namespace:
             '(contains "access_token" and "access_token_issued_at")'
         ),
     )
+    parser.add_argument(
+        "--access-token",
+        help="Cached KIS access token to reuse when still within the reuse window",
+    )
+    parser.add_argument(
+        "--access-token-issued-at",
+        help='UTC ISO-8601 timestamp for --access-token issue time (for example, "2026-05-19T00:05:12Z")',
+    )
+    parser.add_argument(
+        "--token-reuse-hours",
+        type=float,
+        default=None,
+        help="KIS cached token reuse window in hours (default: provider config or 21)",
+    )
     return parser.parse_args()
 
 
@@ -727,6 +751,9 @@ def main() -> int:
             order_mode=args.order_mode,
             limit_offset_bps=args.limit_offset_bps,
             token_state_output=args.token_state_output,
+            access_token=args.access_token,
+            access_token_issued_at=args.access_token_issued_at,
+            token_reuse_hours=args.token_reuse_hours,
         )
     except (ConfigError, BrokerError, requests.RequestException) as exc:
         print(f"[error] {exc}")

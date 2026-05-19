@@ -54,6 +54,7 @@ npm run dev
   - `--order-mode` (`market` | `best_limit` | `aggressive_limit`)
   - `--limit-offset-bps` (used by `aggressive_limit`, default `20`)
   - `--token-state-output` (optional; writes refreshed KIS token state JSON)
+  - `--access-token`, `--access-token-issued-at`, `--token-reuse-hours` (optional cached KIS token reuse inputs)
 - Current provider support: `kis`
 - Execution guard
   - It checks market open status on every run.
@@ -105,6 +106,7 @@ Workflow file: `.github/workflows/auto-floor-sell.yml`
 - Token reuse state (21h window) is loaded from:
   - Secret: `KIS_ACCESS_TOKEN`
   - Variable: `KIS_ACCESS_TOKEN_ISSUED_AT`
+- The workflow passes cached token state both through generated config and explicit CLI options.
 - When a new token is issued, workflow persists refreshed state back to the same Secret/Variable.
 - Then it runs `services/trading-bot/auto_floor_sell.py`
 - Workflow default order mode is `best_limit`
