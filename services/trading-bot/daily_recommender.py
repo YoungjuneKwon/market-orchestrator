@@ -45,6 +45,20 @@ load_account_config = auto_floor_sell.load_account_config
 write_token_state_output = auto_floor_sell.write_token_state_output
 
 
+# KRX trading-day density: ~250 sessions / 365 calendar days ≈ 0.69.
+# To convert a requested "business day" lookback into a calendar window we
+# multiply by 1/0.69 ≈ 1.45, then round up to 1.6 to give a safety margin
+# for short holiday clusters, and add a fixed 14-day buffer to cover the
+# longest typical KRX holiday cluster (Lunar New Year / Chuseok week).
+_CAL_DAYS_PER_BUSINESS_DAY = 1.6
+_HOLIDAY_BUFFER_DAYS = 14
+
+
+def _business_days_to_calendar_window(business_days: int) -> int:
+    """Convert ``business_days`` into a calendar-day lookback for KIS GETs."""
+    return int(business_days * _CAL_DAYS_PER_BUSINESS_DAY) + _HOLIDAY_BUFFER_DAYS
+
+
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
@@ -227,7 +241,9 @@ class RecommenderKisProvider(KisProvider):
         if not rows:
             return {"operating_profit": 0.0}
         latest = rows[0]
-        # KIS profit-ratio response keys vary by api version.
+        # KIS profit-ratio response key names differ across API revisions; try
+        # the known variants in order. Reference: KIS open-trading-api samples
+        # (`bsop_prfi` / `op_prfi` newer, `operating_profit` / `bsop_prti` older).
         candidate_keys = (
             "bsop_prfi",
             "op_prfi",
@@ -246,7 +262,7 @@ class RecommenderKisProvider(KisProvider):
         """Return daily OHLCV bars for ``symbol`` covering at least ``days`` business days."""
         end_dt = datetime.now(KST).date()
         # Add buffer to compensate for weekends/holidays.
-        start_dt = end_dt - timedelta(days=int(days * 1.6) + 14)
+        start_dt = end_dt - timedelta(days=_business_days_to_calendar_window(days))
         data, _ = self._request(
             method="GET",
             path="/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice",
@@ -327,7 +343,7 @@ class RecommenderKisProvider(KisProvider):
     def get_kospi_daily_closes(self, days: int) -> list[float]:
         """Return KOSPI index closing prices in chronological order."""
         end_dt = datetime.now(KST).date()
-        start_dt = end_dt - timedelta(days=int(days * 1.6) + 14)
+        start_dt = end_dt - timedelta(days=_business_days_to_calendar_window(days))
         try:
             data, _ = self._request(
                 method="GET",
