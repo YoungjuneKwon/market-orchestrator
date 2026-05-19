@@ -6,6 +6,10 @@ on:
     - cron: "0,30 0-6 * * 1-5"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   run-auto-floor-sell:
     runs-on: ubuntu-latest
@@ -37,6 +41,8 @@ jobs:
           KIS_API_SECRET: ${{ secrets.KIS_API_SECRET }}
           KIS_CANO: ${{ secrets.KIS_CANO }}
           KIS_ACNT_PRDT_CD: ${{ secrets.KIS_ACNT_PRDT_CD }}
+          KIS_ACCESS_TOKEN: ${{ secrets.KIS_ACCESS_TOKEN }}
+          KIS_ACCESS_TOKEN_ISSUED_AT: ${{ vars.KIS_ACCESS_TOKEN_ISSUED_AT }}
         run: |
           test -n "${KIS_API_KEY}" || (echo "KIS_API_KEY is missing" && exit 1)
           test -n "${KIS_API_SECRET}" || (echo "KIS_API_SECRET is missing" && exit 1)
@@ -52,14 +58,39 @@ jobs:
               "api_secret": "${KIS_API_SECRET}",
               "cano": "${KIS_CANO}",
               "acnt_prdt_cd": "${KIS_ACNT_PRDT_CD}",
-              "env": "real"
+              "env": "real",
+              "access_token": "${KIS_ACCESS_TOKEN}",
+              "access_token_issued_at": "${KIS_ACCESS_TOKEN_ISSUED_AT}",
+              "token_reuse_hours": 21
             }
           }
           EOF
 
       - name: Run auto floor sell
+        env:
+          TOKEN_STATE_PATH: ${{ runner.temp }}/kis-token-state.json
         run: |
           python services/trading-bot/auto_floor_sell.py \
             --config services/trading-bot/account.json \
             --sell-ratio 0.10 \
-            --order-mode best_limit
+            --order-mode best_limit \
+            --token-state-output "${TOKEN_STATE_PATH}"
+
+      - name: Persist KIS token state to repository Secret/Variable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN_STATE_PATH: ${{ runner.temp }}/kis-token-state.json
+        run: |
+          if [ ! -f "${TOKEN_STATE_PATH}" ]; then
+            echo "No refreshed token state to persist."
+            exit 0
+          fi
+
+          access_token="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("access_token",""))' "${TOKEN_STATE_PATH}")"
+          access_token_issued_at="$(python -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("access_token_issued_at",""))' "${TOKEN_STATE_PATH}")"
+
+          test -n "${access_token}" || (echo "token state is missing access_token" && exit 1)
+          test -n "${access_token_issued_at}" || (echo "token state is missing access_token_issued_at" && exit 1)
+
+          gh secret set KIS_ACCESS_TOKEN --repo "${GITHUB_REPOSITORY}" --body "${access_token}"
+          gh variable set KIS_ACCESS_TOKEN_ISSUED_AT --repo "${GITHUB_REPOSITORY}" --body "${access_token_issued_at}"
