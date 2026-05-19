@@ -111,6 +111,42 @@ Workflow file: `.github/workflows/auto-floor-sell.yml`
 - Then it runs `services/trading-bot/auto_floor_sell.py`
 - Workflow default order mode is `best_limit`
 
+## Daily Recommender (KIS)
+
+`services/trading-bot/daily_recommender.py` scans the KOSPI universe once per day
+and prints a markdown table of stocks that started a positive momentum regime.
+
+- Pipeline phases (selectable via `--phase 1|2|3`):
+  - **Phase 1** – universe trim (top trade-value KOSPI) + fundamentals (exclude
+    operating-loss / over-valued, reward high ROE) + recent price pattern + volume surge.
+  - **Phase 2** – adds moving-average alignment (5/20/60) and foreign+institution dual net-buy days.
+  - **Phase 3** – adds KOSPI 20MA macro filter (defensive cap in downtrend) and RSI overbought guard.
+- All thresholds are CLI args with sensible defaults (see `--help`).
+- Output: stdout markdown table with `Symbol, Name, Price, Score, Reasons`;
+  optional JSON via `--recommend-json-output`.
+- Reuses the same KIS token-cache mechanism as `auto_floor_sell.py`
+  (`--access-token`, `--access-token-issued-at`, `--token-reuse-hours`, `--token-state-output`).
+- Rate-limit: configurable inter-call delay (`--api-call-delay`, default `0.15s`).
+
+### Run Manually
+
+```bash
+python services/trading-bot/daily_recommender.py \
+  --config services/trading-bot/account.json \
+  --phase 3 \
+  --top-n 30 \
+  --recommend-json-output /tmp/recommendations.json
+```
+
+### GitHub Actions Schedule
+
+Workflow file: `.github/workflows/daily-recommender.yml`
+
+- Schedule: KST Mon-Fri 13:00 (cron `0 4 * * 1-5` in UTC), plus `workflow_dispatch`.
+- Same Secret/Variable wiring as Auto Floor Sell (`KIS_API_KEY`, `KIS_API_SECRET`,
+  `KIS_CANO`, `KIS_ACNT_PRDT_CD`, `KIS_ACCESS_TOKEN`, `KIS_ACCESS_TOKEN_ISSUED_AT`).
+- Recommended stocks are logged to the workflow stdout as a markdown table.
+
 ## GitHub Pages
 
 `docs/` is prepared as the source for GitHub Pages.
