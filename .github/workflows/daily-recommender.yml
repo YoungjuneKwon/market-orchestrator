@@ -95,7 +95,7 @@ jobs:
             --volume-surge-ratio 1.15 \
             --ma-short 5 \
             --ma-mid 20 \
-            --ma-long 60 \
+            --ma-long 50 \
             --max-disparity-pct 20 \
             --invflow-days-lookback 5 \
             --invflow-days-k 2 \
