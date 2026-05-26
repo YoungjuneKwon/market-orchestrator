@@ -1,5 +1,7 @@
 # market-orchestrator
 
+> [Important: KIS setup guide for fork users (API key issuance + auto floor sell/daily recommender)](docs/kis-fork-setup-ko.md)
+
 Python + Node.js based monorepo for automated trading operations with a broker-agnostic architecture.
 
 ## Vision
